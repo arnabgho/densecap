@@ -3,7 +3,7 @@ require 'nn'
 require 'cutorch'
 require 'cunn'
 
-local utils = require 'utils'
+local utils = require 'densecap.utils'
 require 'densecap.modules.BoxSampler'
 
 local tests = {}

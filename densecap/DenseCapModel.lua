@@ -385,6 +385,8 @@ function DenseCapModel:clearState()
   end
 end
 
+
+-- Will Have to modify this function to get the activations of the region proposals for the bounding boxes for the given relationships
 --[[
 Perform a (training-time) forward pass to compute output and loss,
 and a backward pass to compute gradients.
