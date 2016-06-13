@@ -47,12 +47,12 @@ cmd:option('-vg_img_root_dir', '', 'root directory for vg images')
 -- Output settings
 cmd:option('-max_images', 100, 'max number of images to process')
 cmd:option('-output_dir', '')
-    -- these settings are only used if output_dir is not empty
-    cmd:option('-num_to_draw', 10, 'max number of predictions per image')
-    cmd:option('-text_size', 2, '2 looks best I think')
-    cmd:option('-box_width', 2, 'width of rendered box')
+-- these settings are only used if output_dir is not empty
+cmd:option('-num_to_draw', 10, 'max number of predictions per image')
+cmd:option('-text_size', 2, '2 looks best I think')
+cmd:option('-box_width', 2, 'width of rendered box')
 cmd:option('-output_vis', 1,
-  'if 1 then writes files needed for pretty vis into vis/ ')
+'if 1 then writes files needed for pretty vis into vis/ ')
 cmd:option('-output_vis_dir', 'vis/data')
 
 -- Misc
