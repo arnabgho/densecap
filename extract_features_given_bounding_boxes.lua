@@ -46,7 +46,7 @@ cmd:option('-output_h5', '')
 cmd:option('-gpu', 0)
 cmd:option('-use_cudnn', 1)
 
-cmd:option('-relationship_path','')
+cmd:option('-relationship_path','relationships.json')
 
 
 
@@ -67,23 +67,78 @@ local function run_image(model, img_path, opt, dtype)
 end
 
 
-local function check_with_gt_boxes( boxes_gt , boxes_xywh , num_boxes ):
+local function check_with_gt_boxes( boxes_gt , boxes_xywh , num_images ):
     local all_matching_boxes={}
-    for i=1,num_boxes do
+    for i=1,num_images do
         local matching_boxes={}
         for j in 1,boxes_gt[i] do
             for k in 1,boxes_xcycwh:size(2) do
                 if check_intersection(boxes_gt[i][j] , boxes_xcycwh[i][j]) > opt.thresh then
-                    table.insert(matching_boxes,{j,k})
+                    matching_boxes[j]=k
                 end
             end
         end
         table.insert(all_matching_boxes,matching_boxes)
     end
+    -- Returns the pair ( box_gt_id , boxes_xywh_id ) that overlap maximally with the 
     return all_matching_boxes
 
-local function encode_relationships( all_matching_boxes, all_feats , relationship_ids ):
+local function encode_relationships( all_matching_boxes, all_feats , all_relationship_data , num_images , feat_dim ):
+    local all_relationship={}
+    local all_relationship_labels={}
+    for i=1,num_images do
+        local relationship_image=all_relationship_data[i] -- relationship_image is a triplet of (subject_box_gt_id , object_box_gt_id , relation_id )
+        for j in 1,#relationship_image do
+            if all_matching_boxes[ relationship_image[j][1] ] == nil or all_matching_boxes[ relationship_image[j][2]  ] == nil then goto continue end
+            local feats=torch.Tensor(2,feat_dim)
+            feats[1]=all_feats[i][all_matching_boxes[ relationship_image[j][1] ]]
+            feats[2]=all_feats[i][all_matching_boxes[ relationship_image[j][2] ]]
+            table.insert(all_relationship,feats)
+            table.insert(all_relationship_labels,relationship_image[j][3])
+            ::continue::
+        end
+    end
+    return {all_relationship,all_relationship_labels}
     
+-- Function to get the mapping between the ground truth boxes and the id's of the graph format
+
+local function parse_relationship_json( parsed_json ) -- create the parsed json file for the images that you want to process using python (the subset selection to be done by the python code)
+    local dict_relationship={}
+    local all_relationship_data={}
+    local gt_boxes={}
+    for i in 1,#parsed_json do              -- Iterating over all images
+        local dict_object_id={}       
+        local gt_boxes_image={}
+        local relationship_image={}
+        for j in 1,#parsed_json[i]['relationships'] do       -- Iterating over all relations in an image
+            local object=parsed_json[i]['relationships'][j]['object']
+            local subject=parsed_json[i]['relationships'][j]['subject']
+            local predicate=parsed_json[i]['relationships'][j]['predicate']
+            if dict_relationship[predicate]==nil then
+                local num_rel=#dict_relationship
+                dict_relationship[num_rel+1]=num_rel+1
+            end
+            if dict_object_id[object['id']] == nil then
+                local num_id=#dict_object_id
+                dict_object_id[object['id']] = num_id+1
+                local box=torch.Tensor({ object['x'] , object['y'] , object['w'] , object['h'] })
+                gt_boxes_image[num_id+1]=box
+            end
+
+            if dict_object_id[subject['id']==nil then
+                local num_id=#dict_object_id
+                dict_object_id[subject['id']] = num_id+1
+                local box=torch.Tensor({ object['x'] , object['y'] , object['w'] , object['h'] })
+                gt_boxes_image[num_id+1]=box 
+            end
+
+            table.insert(relationship_image , {  dict_object_id[subject['id'] ,  dict_object_id[object['id'] ,   dict_relationship[predicate]  } )
+        end
+        table.insert(gt_boxes,gt_boxes_image)
+        table.insert(all_relationship_data,relationship_image)
+    end
+    return {dict_relationship,all_relationship_data,gt_boxes} 
+end
 
 
 
