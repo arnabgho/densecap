@@ -44,7 +44,7 @@ basic preprocessing (split by words, remove special characters).
 Note, in general any indices anywhere in input/output of this file are 1-indexed.
 
 The output JSON file is an object with the following elements:
-- token_to_idx: Dictionary mapping strings to integers for encoding tokens, 
+- token_to_idx: Dictionary mapping strings to integers for encoding tokens,
                 in 1-indexed format.
 - filename_to_idx: Dictionary mapping string filenames to indices.
 - idx_to_token: Inverse of the above.
@@ -93,7 +93,7 @@ def build_vocab(data, min_token_instances, verbose=True):
   for token, count in token_counter.iteritems():
     if count >= min_token_instances:
       vocab.add(token)
-      
+
   if verbose:
     print ('Keeping %d / %d tokens with enough instances'
               % (len(vocab), len(token_counter)))
@@ -103,7 +103,7 @@ def build_vocab(data, min_token_instances, verbose=True):
     if verbose:
       print('adding special <UNK> token.')
   else:
-    if verbose: 
+    if verbose:
       print('no <UNK> token needed.')
 
   return vocab
@@ -117,7 +117,7 @@ def build_vocab_dict(vocab):
     token_to_idx[token] = next_idx
     idx_to_token[next_idx] = token
     next_idx = next_idx + 1
-    
+
   return token_to_idx, idx_to_token
 
 
@@ -157,21 +157,21 @@ def encode_boxes(data, original_heights, original_widths, image_size):
       if region['tokens'] is None: continue
       # recall: x,y are 1-indexed
       x, y = round(scale*(region['x']-1)+1), round(scale*(region['y']-1)+1)
-      w, h = round(scale*region['width']), round(scale*region['height'])  
-      
+      w, h = round(scale*region['width']), round(scale*region['height'])
+
       # clamp to image
       if x < 1: x = 1
       if y < 1: y = 1
-      if x > image_size - 1: 
+      if x > image_size - 1:
         x = image_size - 1
         xwasbad += 1
-      if y > image_size - 1: 
+      if y > image_size - 1:
         y = image_size - 1
         ywasbad += 1
-      if x + w > image_size: 
+      if x + w > image_size:
         w = image_size - x
         wwasbad += 1
-      if y + h > image_size: 
+      if y + h > image_size:
         h = image_size - y
         hwasbad += 1
 
@@ -196,14 +196,14 @@ def build_img_idx_to_box_idxs(data):
       box_idx += 1
     img_to_last_box[img_idx - 1] = box_idx - 1 # -1 to make these inclusive limits
     img_idx += 1
-  
+
   return img_to_first_box, img_to_last_box
 
 def build_filename_dict(data):
   # First make sure all filenames
   filenames_list = ['%d.jpg' % img['id'] for img in data]
   assert len(filenames_list) == len(set(filenames_list))
-  
+
   next_idx = 1
   filename_to_idx, idx_to_filename = {}, {}
   for img in data:
@@ -225,21 +225,21 @@ def encode_filenames(data, filename_to_idx):
 
 def add_images(data, h5_file, args):
   num_images = len(data)
-  
+
   shape = (num_images, 3, args.image_size, args.image_size)
   image_dset = h5_file.create_dataset('images', shape, dtype=np.uint8)
   original_heights = np.zeros(num_images, dtype=np.int32)
   original_widths = np.zeros(num_images, dtype=np.int32)
   image_heights = np.zeros(num_images, dtype=np.int32)
   image_widths = np.zeros(num_images, dtype=np.int32)
-  
+
   lock = Lock()
   q = Queue()
-  
+
   for i, img in enumerate(data):
     filename = os.path.join(args.image_dir, '%s.jpg' % img['id'])
     q.put((i, filename))
-    
+
   def worker():
     while True:
       i, filename = q.get()
@@ -265,7 +265,7 @@ def add_images(data, h5_file, args):
       image_dset[i, :, :H, :W] = img.transpose(2, 0, 1)
       lock.release()
       q.task_done()
-  
+
   print('adding images to hdf5.... (this might take a while)')
   for i in xrange(args.num_workers):
     t = Thread(target=worker)
@@ -330,7 +330,7 @@ def split_filter_captions(data, max_token_length, tokens_type, verbose=True):
         region['tokens'] = None
         captions_removed += 1
         img_removed += 1
-    
+
     if regions_per_image == 0:
       print 'kept %d, removed %d' % (img_kept, img_removed)
       assert False, 'DANGER, some image has no valid regions. Not super sure this doesnt cause bugs. Think about more if it comes up'
@@ -397,18 +397,18 @@ def main(args):
   # build vocabulary
   vocab = build_vocab(data, args.min_token_instances) # vocab is a set()
   token_to_idx, idx_to_token = build_vocab_dict(vocab) # both mappings are dicts
-    
+
   # encode labels
   captions_matrix, lengths_vector = encode_captions(data, token_to_idx, args.max_token_length)
   f.create_dataset('labels', data=captions_matrix)
   f.create_dataset('lengths', data=lengths_vector)
-  
+
   # encode boxes
   original_heights = np.asarray(f['original_heights'])
   original_widths = np.asarray(f['original_widths'])
   boxes_matrix = encode_boxes(data, original_heights, original_widths, args.image_size)
   f.create_dataset('boxes', data=boxes_matrix)
-  
+
   # integer mapping between image ids and box ids
   img_to_first_box, img_to_last_box = build_img_idx_to_box_idxs(data)
   f.create_dataset('img_to_first_box', data=img_to_first_box)
@@ -418,7 +418,7 @@ def main(args):
   f.create_dataset('box_to_img', data=box_to_img)
   f.close()
 
-  # and write the additional json file 
+  # and write the additional json file
   json_struct = {
     'token_to_idx': token_to_idx,
     'idx_to_token': idx_to_token,
@@ -454,7 +454,7 @@ if __name__ == '__main__':
   # OPTIONS
   parser.add_argument('--image_size',
       default=720, type=int,
-      help='Size of longest edge of preprocessed images')  
+      help='Size of longest edge of preprocessed images')
   parser.add_argument('--max_token_length',
       default=15, type=int,
       help="Set to 0 to disable filtering")
