@@ -12,7 +12,7 @@ require 'densecap.modules.PosSlicer'
 
 local box_utils = require 'densecap.box_utils'
 local utils = require 'densecap.utils'
-
+unpack=table.unpack
 
 local DenseCapModel, parent = torch.class('DenseCapModel', 'nn.Module')
 
@@ -234,7 +234,7 @@ Output: A table of
   probabilities (the +2 is two extra time steps for CNN input and END token).
   At test time, an array of shape (N, L) where each element is an integer in
   the range [1, V] giving sampled captions.
-- gt_boxes: At training time, an array of shape (P, 4) giving ground-truth
+- gt_boxes: At training time, an array of shape (P, 4) giving ground-truth                      -- The MVP .. this has to be used to get the mapping
   boxes corresponding to the sampled positives. At test time, an empty tensor.
 - gt_labels: At training time, an array of shape (P, L) giving ground-truth
   sequences for sampled positives. At test-time, and empty tensor.

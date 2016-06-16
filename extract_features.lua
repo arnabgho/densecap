@@ -31,6 +31,7 @@ local function run_image(model, img_path, opt, dtype)
   -- Load, resize, and preprocess image
   local img = image.load(img_path, 3)
   img = image.scale(img, opt.image_size):float()
+  print(img)
   local H, W = img:size(2), img:size(3)
   local img_caffe = img:view(1, 3, H, W)
   img_caffe = img_caffe:index(2, torch.LongTensor{3, 2, 1}):mul(255)

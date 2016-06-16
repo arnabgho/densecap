@@ -29,7 +29,7 @@ local box_utils = require 'densecap.box_utils'
 local unpack=table.unpack
 
 local cmd = torch.CmdLine()
-
+unpack=table.unpack
 -- Model options
 cmd:option('-checkpoint',
   'data/models/densecap/densecap-pretrained-vgg16.t7')
@@ -41,40 +41,55 @@ cmd:option('-boxes_per_image', 100)
 
 cmd:option('-input_txt', '')
 cmd:option('-max_images', 0)
-cmd:option('-output_h5', 'data/h5s/encoding_boxes.h5')
+cmd:option('-output_h5', 'data/h5s/encoding_boxes_gt.h5')
 
 cmd:option('-gpu', 0)
 cmd:option('-use_cudnn', 1)
 
 cmd:option('-relationship_h5','data/h5s/images_relationship.h5')
 cmd:option('-valid_relationships','data/processed_jsons/valid_relationships.json')
-cmd:option('-relationship_map','data/processed_jsons/relationship_map.json')
-cmd:option('-thresh',0.9)
+cmd:option('-relationship_map','data/processed_jsons/relationship_map_gt.json')
+cmd:option('-thresh',0.95)
 
 
-local function run_image(model, img, opt, dtype)
-  -- Load, resize, and preprocess image  
-  img = img:float()
- 
-  local H, W = img:size(2), img:size(3)
-  local img_caffe = img:view(1, 3, H, W)
-  img_caffe = img_caffe:index(2, torch.LongTensor{3, 2, 1})
-  local vgg_mean = torch.FloatTensor{103.939, 116.779, 123.68}
-  vgg_mean = vgg_mean:view(1, 3, 1, 1):expand(1, 3, H, W)
-  img_caffe:add(-1, vgg_mean)
+local function run_image(model, img,gt_table, opt, dtype)
+    -- Load, resize, and preprocess image  
+    img = img:float()
+    print(img:size())
+    local B=#gt_table
+    local gt_boxes=torch.Tensor(1 , B , 4 ):type(dtype)
+    local gt_labels=torch.Tensor(1,B,19):type(dtype)
+    for i=1,B do
+        gt_boxes[1][i]=gt_table[i]:type(dtype)
+    end
 
-  local boxes_xcycwh, feats = model:extractFeatures(img_caffe:type(dtype))
-  local boxes_xywh = box_utils.xcycwh_to_xywh(boxes_xcycwh)
-  return boxes_xywh, feats
+    model:training()
+    model:setGroundTruth(gt_boxes,gt_labels)
+    local H, W = img:size(2), img:size(3)
+    local img_caffe = img:view(1, 3, H, W)
+    img_caffe = img_caffe:index(2, torch.LongTensor{3, 2, 1})
+    local vgg_mean = torch.FloatTensor{103.939, 116.779, 123.68}
+    vgg_mean = vgg_mean:view(1, 3, 1, 1):expand(1, 3, H, W)
+    img_caffe:add(-1, vgg_mean)
+
+    --model.nets.localization_layer:setImageSize(H,W)
+    local output=model:updateOutput(img_caffe:type(dtype))
+    local final_gt_boxes=output[6]
+    
+    local final_boxes_xcycwh=output[4]:float()
+    local feats=model.nets.recog_base.output:float()
+
+    local final_boxes=box_utils.xcycwh_to_xywh(final_boxes_xcycwh)
+    final_boxes=final_boxes:float()
+    return {final_gt_boxes,final_boxes,feats}
+
+    --local boxes_xcycwh, feats = model:extractFeatures(img_caffe:type(dtype))
+    --local boxes_xywh = box_utils.xcycwh_to_xywh(boxes_xcycwh)
+    --return boxes_xywh, feats
 end
 
 
 local function check_intersection( bbgt , bb  )
-   -- print("Ground Truth Coordinates")
-   -- print(string.format("x:%g , y:%g , w:%d , h:%d",bbgt[1],bbgt[2],bbgt[3],bbgt[4]))
-   -- print("Bounding Box Coordinates")
-   -- print(string.format("x:%g , y:%g , w:%d , h:%d",bb[1],bb[2],bb[3],bb[4]))
-
     local bi={math.max(bb[1],bbgt[1]), math.max(bb[2],bbgt[2]),
     math.min(bb[3],bbgt[3]), math.min(bb[4],bbgt[4])}
     local iw = bi[3]-bi[1]+1
@@ -90,26 +105,7 @@ local function check_intersection( bbgt , bb  )
     end
     return ov
 end
-
-local function check_with_gt_boxes( boxes_gt , boxes_xywh , num_images, opt )
-    local all_matching_boxes={}
-    for i=1,num_images do
-        local matching_boxes={}
-        for j = 1,boxes_gt[i] do
-            local ovmax=0
-            for k = 1,boxes_xcycwh:size(2) do
-                local ov=check_intersection(boxes_gt[i][j] , boxes_xywh[i][j])
-                if ov > opt.thres and ov>ovmax then
-                    matching_boxes[j]=k
-                end
-            end
-        end
-        table.insert(all_matching_boxes,matching_boxes)
-    end
-    -- Returns the pair ( box_gt_id , boxes_xywh_id ) that overlap maximally with the 
-    return all_matching_boxes
-end
-local function check_with_gt_box( boxes_gt , boxes_xywh , num_images, opt )
+local function check_with_gt_box( boxes_gt ,boxes_xywh , num_images, opt )
     --local all_matching_boxes={}
     --for i=1,num_images do
         local matching_boxes={}
@@ -130,24 +126,6 @@ local function check_with_gt_box( boxes_gt , boxes_xywh , num_images, opt )
     return matching_boxes
 end
 
-local function encode_relationships( all_matching_boxes, all_feats , all_relationship_data , num_images , feat_dim ,opt )
-    local all_relationship={}
-    local all_relationship_labels={}
-    for i=1,num_images do
-        local relationship_image=all_relationship_data[i] -- relationship_image is a triplet of (subject_box_gt_id , object_box_gt_id , relation_id )
-        local matching_boxes=all_matching_boxes[i]
-        for j = 1,#relationship_image do
-            if matching_boxes[ relationship_image[j][1] ] == nil or matching_boxes[ relationship_image[j][2]  ] == nil then goto continue end
-            local feats=torch.Tensor(2,feat_dim)
-            feats[1]=all_feats[i][matching_boxes[ relationship_image[j][1] ]]
-            feats[2]=all_feats[i][matching_boxes[ relationship_image[j][2] ]]
-            table.insert(all_relationship,feats)
-            table.insert(all_relationship_labels,relationship_image[j][3])
-            ::continue::
-        end
-    end
-    return {all_relationship,all_relationship_labels}
-end    
 
 local function encode_relationships_image( matching_boxes, all_feats , relationship_image , num_images , feat_dim ,opt )
     local all_relationship={}
@@ -157,13 +135,20 @@ local function encode_relationships_image( matching_boxes, all_feats , relations
      --   local matching_boxes=all_matching_boxes[i]
         for j = 1,#relationship_image do
             if matching_boxes[ relationship_image[j][1] ] == nil or matching_boxes[ relationship_image[j][2]  ] == nil then goto continue end
-            local feats=torch.Tensor(2,feat_dim):cuda()
+            local feats=torch.Tensor(2,feat_dim)
 
             print("matching_boxes[ relationship_image[j][1] ]")
             print( matching_boxes[ relationship_image[j][1] ])
 
             print("matching_boxes[ relationship_image[j][2] ]")
             print( matching_boxes[ relationship_image[j][2] ])
+
+            print(" relationship_image[j][1] ")
+            print( relationship_image[j][1] )
+
+            print("relationship_image[j][2] ")
+            print( relationship_image[j][2] )
+
 
 
             feats[1]=all_feats[matching_boxes[ relationship_image[j][1] ]]
@@ -244,18 +229,6 @@ end
 
 local function main()
     local opt = cmd:parse(arg)
-    --  assert(opt.input_txt ~= '', 'Must provide -input_txt')
-    --  assert(opt.output_h5 ~= '', 'Must provide -output_h5')
-
-    -- Read the text file of image paths
-    --  local image_paths = {}
-    --  for image_path in io.lines(opt.input_txt) do
-    --    table.insert(image_paths, image_path)
-    --    if opt.max_images > 0 and #image_paths == opt.max_images then
-    --      break
-    --    end
-    --  end
-
     -- Load and set up the model
     local dtype, use_cudnn = utils.setup_gpus(opt.gpu, opt.use_cudnn)
     local checkpoint = torch.load(opt.checkpoint)
@@ -310,10 +283,11 @@ local function main()
     local all_relationship_labels={}
     for i=1,N do
         print(string.format('Processing image %d / %d', i, N))
-        local boxes, feats = run_image(model, relationship_images_all[i], opt, dtype)
+        if #gt_boxes[i]==0 then goto continue end
+        local final_gt_boxes,final_boxes,feats=unpack( run_image(model, relationship_images_all[i],gt_boxes[i] , opt, dtype))
         -- all_boxes[i]:copy(boxes[{{1, M}}])
         -- all_feats[i]:copy(feats[{{1, M}}])
-        local matching_boxes=check_with_gt_box(gt_boxes[i] , boxes , N , opt)
+        local matching_boxes=check_with_gt_box(gt_boxes[i] , final_gt_boxes , N , opt)
         --table.insert(all_matching_boxes,matching_boxes)  Don't need this perhaps
         --encode_relationships
         local relationships,relationship_labels=unpack(encode_relationships_image( matching_boxes, feats , all_relationship_data[i] , num_images , D ,opt ))
@@ -324,6 +298,7 @@ local function main()
         print("Number of Relationships till now")
         print(#all_relationship)
         collectgarbage()
+        ::continue::
     end
 
     collectgarbage()

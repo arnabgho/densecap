@@ -1,4 +1,5 @@
-import argparse, os, json, stringfrom collections import Counter
+import argparse, os, json, string
+from collections import Counter
 from Queue import Queue
 from threading import Thread, Lock
 
@@ -15,6 +16,11 @@ Steps to be implemented :
     Read the relationships json file and select 10000 images which are present in the dataset using a try catch statement
     Store the 10000 images in an h5 file and the 10000 relationships in separate json file so that
 """
+xwasbad = 0
+ywasbad = 0
+wwasbad = 0
+hwasbad = 0
+
 
 def read_corresponding_images( relationship_json , image_root , max_limit ):
     valid_images=[]
@@ -22,13 +28,47 @@ def read_corresponding_images( relationship_json , image_root , max_limit ):
     for i in range(len(relationship_json)):
         if len(valid_images)==max_limit :
             break
-        image_id=relationship_json[i]['id']
-        if os.path.isfile( image_root + image_id + 'jpg'   ):
+        image_id=str(relationship_json[i]['id'])
+        #print("Image File:")
+        #print( image_root +"/" +image_id + '.jpg' )
+        if os.path.isfile( image_root+"/" + image_id + '.jpg'   ):
             if os.path.getsize(  image_root +"/"+ image_id + '.jpg'   )>0:
                 valid_images.append( image_id  )
                 valid_relationships.append( relationship_json[ i ]  )
 
+    print("Number of valid images: ")
+    print(len(valid_images))
     return valid_images,valid_relationships
+
+
+
+def clamp_toimage(x,y,w,h,scale,image_size):
+    global xwasbad
+    global ywasbad
+    global wwasbad
+    global hwasbad
+    x= round( scale*(x - 1)+1)
+    y= round( scale*(y - 1)+1)
+    w= round( scale*(w ))
+    h= round( scale*(h ))
+
+    # clamp to image
+    if x<1: x=1
+    if y<1: y=1
+    if x>image_size-1:
+        x=image_size-1
+        xwasbad +=1
+    if y>image_size-1:
+        y=image_size-1
+        ywasbad+=1
+    if x+w>image_size :
+        w=image_size-x
+        wwasbad+=1
+    if y+h>image_size:
+        h=image_size-y
+        hwasbad+=1
+
+    return x,y,w,h
 
 
 
@@ -37,31 +77,34 @@ def recompute_box_dims( image_size , valid_relationships , image_root ):
         Recompute the bounding boxes for each of the relationship boxes
         and return the cleaned up bounding boxes
     """
-    xwasbad = 0
-    ywasbad = 0
-    wwasbad = 0
-    hwasbad = 0
-
     for i in range( len( valid_relationships ) ):
-        image_id=valid_relationships[i]['id']
+        image_id=str(valid_relationships[i]['id'])
         image_data=imread(image_root+'/'+image_id+'.jpg')
           # handle grayscale
-        if imgage_data.ndim == 2:
+        if image_data.ndim == 2:
             image_data = image_data[:, :, None][:, :, [0, 0, 0]]
         H,W,D=image_data.shape
         scale=float(image_size) / max(H,W)
         for j in range( len( valid_relationships[i]['relationships']  ) ):
-            x,y= valid_relationships[i]['relationships'][j]['x'],  valid_relationships[i]['relationships'][j]['x']
-            w,h= valid_relationships[i]['relationships'][j]['w'],  valid_relationships[i]['relationships'][j]['h']
-            x= round( scale*(x - 1)+1)
-            y= round( scale*(y - 1)+1)
-            w= round( scale*(w ))
-            h= round( scale*(h ))
 
-            # clamp to image
-            if x<1: x=1
-            if y<1: y=1
-            if x>image_size
+            x,y= valid_relationships[i]['relationships'][j]['object'][ 'x'],  valid_relationships[i]['relationships'][j]['object']['x']
+            w,h= valid_relationships[i]['relationships'][j]['object']['w'],  valid_relationships[i]['relationships'][j]['object']['h']
+
+            x_new,y_new,w_new,h_new=clamp_toimage(x,y,w,h,scale,image_size)
+
+            valid_relationships[i]['relationships'][j]['object']['x'],  valid_relationships[i]['relationships'][j]['object']['x']=x_new,y_new
+            valid_relationships[i]['relationships'][j]['object']['w'],  valid_relationships[i]['relationships'][j]['object']['h']=w_new,h_new
+
+            x,y= valid_relationships[i]['relationships'][j]['subject']['x'],  valid_relationships[i]['relationships'][j]['subject']['x']
+            w,h= valid_relationships[i]['relationships'][j]['subject']['w'],  valid_relationships[i]['relationships'][j]['subject']['h']
+
+            x_new,y_new,w_new,h_new=clamp_toimage(x,y,w,h,scale,image_size)
+
+            valid_relationships[i]['relationships'][j]['subject']['x'],  valid_relationships[i]['relationships'][j]['subject']['x']=x_new,y_new
+            valid_relationships[i]['relationships'][j]['subject']['w'],  valid_relationships[i]['relationships'][j]['subject']['h']=w_new,h_new
+
+
+
 
     return valid_relationships
 
@@ -71,36 +114,37 @@ def create_image_h5( image_size ,  image_root ,h5_file ,  valid_images , num_wor
         Create the h5 file containing all the valid reshaped images
     """
     num_images=len(valid_images)
-    shape=h5_file.create_dataset('images_relationship',shape,dtype=np.uint8)
+    shape= ( num_images , 3 , image_size ,image_size)
+    image_dset = h5_file.create_dataset('images_relationship',shape,dtype=np.uint8)
 
     lock=Lock()
     q=Queue()
 
     for i in range(len( valid_images )):
-        filename=os.path.join(image_root,"%s.jpg" % valid_images[i]
+        filename=os.path.join(image_root,"%s.jpg" % valid_images[i])
         q.put((i,filename))
 
     def worker():
-        for i in range(len(valid_images)):
-        i,filename=q.get()
-        img=imread(filename)
-        # handle grayscale
-        if img.ndim==2:
-            img=img[:,:,None][:,:,[0,0,0]]
-        H0,W0 = img.shape[0],img.shape[1]
-        img=imresize( img, float(image_size) / max(H0,W0))
-        H,W=img.shape[0],img.shape[1]
-        #swap rgb to bgr
-        r=img[:,:,0].copy()
-        img[:,:,0]=img[:,:,2]
-        img[:,:,2]=r
+        while True:
+            i,filename=q.get()
+            img=imread(filename)
+            # handle grayscale
+            if img.ndim==2:
+                img=img[:,:,None][:,:,[0,0,0]]
+            H0,W0 = img.shape[0],img.shape[1]
+            img=imresize( img, float(image_size) / max(H0,W0))
+            H,W=img.shape[0],img.shape[1]
+            #swap rgb to bgr
+            r=img[:,:,0].copy()
+            img[:,:,0]=img[:,:,2]
+            img[:,:,2]=r
 
-        lock.acquire()
-        if i%1000==0:
-            print 'Writing image %d / %d' % ( i, len(valid_images)   )
-        image_dset[i,:,:H,:W]=img.transpose(2,0,1)
-        lock.release()
-        q.task_done()
+            lock.acquire()
+            if i%1000==0:
+                print 'Writing image %d / %d' % ( i, len(valid_images)   )
+            image_dset[i,:,:H,:W]=img.transpose(2,0,1)
+            lock.release()
+            q.task_done()
 
     print('adding images to hdf5 ...(this might take a while) ')
     for i in xrange(num_workers):
@@ -113,7 +157,7 @@ def main(opt):
     '''
         use the above defined functions to achieve the end result
     '''
-    with open(args.relationship,'r') as f:
+    with open(opt.relationship,'r') as f:
         relationship_json=json.load(f)
 
     valid_images,valid_relationships=read_corresponding_images(   relationship_json , opt.image_root , opt.max_limit  )
@@ -135,11 +179,11 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser()
 
     parser.add_argument('--relationship',
-                default='',
+                default='data/jsons/relationships.json',
                 help='The Relationship JSON File')
 
     parser.add_argument('--image_root',
-                default='',
+                default='data/images/VG_100K',
                 help='The image root in which the images are present')
     parser.add_argument('--max_limit',
                 default=10000, type=int ,
@@ -152,11 +196,11 @@ if __name__=='__main__':
                 help='The image size to which all the images have to be reshaped')
 
     parser.add_argument('--h5_output',
-                    default='data/images_relationship.h5',
+                    default='data/h5s/images_relationship.h5',
                     help='The output file for the valid images to be written')
 
     parser.add_argument('--json_output',
-                    deault='data/preprocessed_json/valid_relationships.json',
+                    default='data/processed_jsons/valid_relationships.json',
                     help='The json file in which the valid relationships are written')
 
     opt=parser.parse_args()
