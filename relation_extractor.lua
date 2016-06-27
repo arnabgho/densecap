@@ -5,11 +5,14 @@ TODO : Load the json files corresponding to the relationship file relationships.
 TODO : Learn the LSTM module and create the visualizations
 --]] 
 
+require 'optim'
 require 'nn'
 require 'rnn'
-require 'cjson'
+cjson=require 'cjson'
 require 'cudnn'
 
+OneHot=require 'relation_extractor.util.OneHot'
+local utils= require 'densecap.utils'
 opt = lapp[[
 --rnn_size                  (default 512)                              The size of the RNN
 --vocab_size                (default 1000)                             The size of the vocabulary    
@@ -29,7 +32,9 @@ opt = lapp[[
 --inverse_map               (default 'data/processed_jsons/relationship_inverse_map_gt') The map contining the int-predicate mapping
 --seq_length                (default 2)                                 The sequence length of data
 --train                     (default 0.9)                               The training fraction
---test                      (default 0.1)                               The testing fraction
+--test                      (default 0)                               The testing fraction
+--val                       (default 0.1)                               The Validation fraction
+--use_cudnn                 (default 1)                                 Use CUDNN
 ]]
 
 print(opt)
@@ -42,7 +47,7 @@ local rmap=cjson.decode(rmap_json_text)
 
 local inv_map={}
 opt.num_relations=0
-for k,v in rmap_json do 
+for k,v in pairs(rmap) do 
     inv_map[v]=k 
     opt.num_relations=opt.num_relations+1 
 end
@@ -52,7 +57,7 @@ local inv_map_file=io.open(opt.inverse_map,'w')
 inv_map_file:write(inv_map_text)
 inv_map_file:close()
 
-
+local dtype=utils.setup_gpus(opt.gpu,opt.use_cudnn)
 ---------------------------
 
 if opt.gpu==0 then
@@ -61,9 +66,9 @@ else
     opt.gpu=false
 end
 -- Load the loader file
-local relation_extractor_loader=require 'relation_extractor_loader'
+local relation_extractor_loader=require 'relation_extractor.relation_extractor_loader'
 
-local loader=relation_extractor_loader.create( opt.input_h5 , opt.batch_size , {opt.train,opt.test,1-opt.train-opt.test} , 2 ,feature_size) 
+loader=relation_extractor_loader.create( opt.input_h5 , opt.batch_size , {opt.train,opt.val,opt.test} , 2 ,opt.feature_size) 
 -- LSTM network 
 
 if opt.model=='lstm' then
@@ -100,6 +105,22 @@ parameters_re,gradParameters_re=relation_extractor:getParameters()
 
 rmspropState_re={learningRate=opt.rmsprop_lr, alpha=opt.rmsprop_dr}
 
+if opt.gpu then
+    print('Copy Model To GPU')
+    relation_extractor:cuda()
+    --criterion:cuda()
+end
+
+local function one_hot(y)
+    local oneHot=torch.Tensor(y:size(1),opt.num_relations):zero()
+--    print("oneHot:size()")
+--    print(oneHot:size())
+
+    for i=1,y:size(1) do
+        oneHot[i][y[i]]=1
+    end
+    return oneHot:type(dtype)
+end
 
 local function feval(x)
     if x~= parameters_re then
@@ -111,31 +132,40 @@ local function feval(x)
 
     ---------------------get minibatch ------------------------
     local x ,y = loader:next_batch(1)
-
+    x=x:type(dtype)
+    --y=y:type(dtype)
     ---------------------forward pass-------------------------
-    
+    --y=one_hot(y)
+    --y=y:type(dtype)
+
     local loss=0
-    local pred_y=relation_extractor:forward(x)
-    loss=loss+criterion:forward(pred_y,y)
+    local pred_y=relation_extractor:forward(x):double()
+    --print(pred_y)
+    loss=loss+criterion:forward(pred_y:double(),y)
 
     local dloss_do=criterion:backward(pred_y,y)
-    relation_extractor:backward(x,dloss_do)
+    relation_extractor:backward(x,dloss_do:cuda())
 
     return loss,gradParameters_re
 end
 
-local function train_relation_extractor() 
-    local num_train=loader:totalTraining()
-    local batch_size=opt.batchSize
+local function train_relation_extractor(loader) 
+    local num_train=loader:numSamples(1)
+    local batch_size=opt.batch_size
     for epoch = 1,opt.num_epochs do
-        local num_iter_per_epoch=math.floor(num_train/batch_size)
-        for i in 1,num_iter_per_epoch do
-            local _,loss_rnn=optim.rmsprop( feval , parameters_re , rmspropState_re )
+        local num_iter_per_epoch=math.floor(num_train/opt.batch_size)
+        local loss_epoch=0
+        for i = 1,num_iter_per_epoch do
+            --local _,loss_rnn=optim.rmsprop( feval , parameters_re , rmspropState_re )
+            local _,loss_rnn=optim.adam( feval , parameters_re)
+            loss_epoch=loss_epoch+loss_rnn[#loss_rnn]
         end
-
+        print("Average loss in this epoch")
+        print(loss_epoch/(num_iter_per_epoch*batch_size))
+        validate_relation_extractor(loader)
         if epoch % opt.saveFreq==0 then
             local file='re_rnn_epoch'..epoch
-            local filename=path.concat(opt.save,file)
+            local filename=paths.concat(opt.log,file)
             os.execute('mkdir -p '.. sys.dirname(filename))
             if paths.filep(filename) then
                 os.execute('mv '..filename .. ' ' .. filename .. '.old') 
@@ -145,5 +175,30 @@ local function train_relation_extractor()
         end
     end
 end
-    
+   
+function validate_relation_extractor(loader)
+    local num_val=loader:numSamples(2)
+    local batch_size=opt.batch_size
+    local num_iter=math.floor(num_val/opt.batch_size)
+    local tot_seen=0
+    local tot_correct=0
+    for i= 1 , num_iter do
+        local x,y=loader:next_batch(2)
+        x=x:type(dtype)
+        local out=relation_extractor:forward(x)
+        local max,indices=torch.max(out,2)
+        indices=indices:long()
+        y=y:long()
+        local num_correct=torch.sum( indices:eq( y:long() )  )
+        tot_correct=tot_correct+num_correct
+        tot_seen=tot_seen+batch_size
+    end
+    print("tot_correct")
+    print(tot_correct)
+    print("tot_seen")
+    print(tot_seen)
+    print("Accuracy On Validation Set")
+    print((100.0*tot_correct)/tot_seen)
+end
 
+train_relation_extractor(loader)

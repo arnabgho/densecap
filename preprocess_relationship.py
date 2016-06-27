@@ -87,24 +87,21 @@ def recompute_box_dims( image_size , valid_relationships , image_root ):
         scale=float(image_size) / max(H,W)
         for j in range( len( valid_relationships[i]['relationships']  ) ):
 
-            x,y= valid_relationships[i]['relationships'][j]['object'][ 'x'],  valid_relationships[i]['relationships'][j]['object']['x']
+            x,y= valid_relationships[i]['relationships'][j]['object'][ 'x'],  valid_relationships[i]['relationships'][j]['object']['y']
             w,h= valid_relationships[i]['relationships'][j]['object']['w'],  valid_relationships[i]['relationships'][j]['object']['h']
 
             x_new,y_new,w_new,h_new=clamp_toimage(x,y,w,h,scale,image_size)
 
-            valid_relationships[i]['relationships'][j]['object']['x'],  valid_relationships[i]['relationships'][j]['object']['x']=x_new,y_new
+            valid_relationships[i]['relationships'][j]['object']['x'],  valid_relationships[i]['relationships'][j]['object']['y']=x_new,y_new
             valid_relationships[i]['relationships'][j]['object']['w'],  valid_relationships[i]['relationships'][j]['object']['h']=w_new,h_new
 
-            x,y= valid_relationships[i]['relationships'][j]['subject']['x'],  valid_relationships[i]['relationships'][j]['subject']['x']
+            x,y= valid_relationships[i]['relationships'][j]['subject']['x'],  valid_relationships[i]['relationships'][j]['subject']['y']
             w,h= valid_relationships[i]['relationships'][j]['subject']['w'],  valid_relationships[i]['relationships'][j]['subject']['h']
 
             x_new,y_new,w_new,h_new=clamp_toimage(x,y,w,h,scale,image_size)
 
-            valid_relationships[i]['relationships'][j]['subject']['x'],  valid_relationships[i]['relationships'][j]['subject']['x']=x_new,y_new
+            valid_relationships[i]['relationships'][j]['subject']['x'],  valid_relationships[i]['relationships'][j]['subject']['y']=x_new,y_new
             valid_relationships[i]['relationships'][j]['subject']['w'],  valid_relationships[i]['relationships'][j]['subject']['h']=w_new,h_new
-
-
-
 
     return valid_relationships
 
@@ -161,6 +158,11 @@ def main(opt):
         relationship_json=json.load(f)
 
     valid_images,valid_relationships=read_corresponding_images(   relationship_json , opt.image_root , opt.max_limit  )
+
+    print("-------------------------------------")
+    print(valid_images[1])
+    print(valid_relationships[1]['id'])
+    print("--------------------------------------")
 
     valid_relationships=recompute_box_dims( opt.image_size , valid_relationships , opt.image_root )
 

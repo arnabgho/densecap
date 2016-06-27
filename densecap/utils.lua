@@ -1,5 +1,5 @@
 local cjson = require 'cjson'
-
+require 'os'
 local utils = {}
 
 
@@ -92,6 +92,7 @@ end
 function utils.write_json(path, j)
   cjson.encode_sparse_array(true, 2, 10)
   local text = cjson.encode(j)
+  os.execute('mkdir -p '..sys.dirname(path))
   local file = io.open(path, 'w')
   file:write(text)
   file:close()

@@ -55,7 +55,7 @@ cmd:option('-thresh',0.95)
 local function run_image(model, img,gt_table, opt, dtype)
     -- Load, resize, and preprocess image  
     img = img:float()
-    print(img:size())
+    --print(img:size())
     local B=#gt_table
     local gt_boxes=torch.Tensor(1 , B , 4 ):type(dtype)
     local gt_labels=torch.Tensor(1,B,19):type(dtype)
@@ -96,11 +96,11 @@ local function check_intersection( bbgt , bb  )
     local ih = bi[4]-bi[2]+1
     local ov=0
     if iw>0 and ih>0 then
-        print("iw and iw non zero")
+        --print("iw and iw non zero")
         -- compute overlap as area of intersection / area of union
         local ua = (bb[3]-bb[1]+1)*(bb[4]-bb[2]+1)+
         (bbgt[3]-bbgt[1]+1)*(bbgt[4]-bbgt[2]+1)-iw*ih
-        print(ua)
+        --print(ua)
         ov = iw*ih/ua
     end
     return ov
@@ -127,7 +127,7 @@ local function check_with_gt_box( boxes_gt ,boxes_xywh , num_images, opt )
 end
 
 
-local function encode_relationships_image( matching_boxes, all_feats , relationship_image , num_images , feat_dim ,opt )
+local function encode_relationships_image(gt_boxes, boxes_xywh , matching_boxes, all_feats , relationship_image , num_images , feat_dim ,opt )
     local all_relationship={}
     local all_relationship_labels={}
     --for i=1,num_images do
@@ -137,18 +137,23 @@ local function encode_relationships_image( matching_boxes, all_feats , relations
             if matching_boxes[ relationship_image[j][1] ] == nil or matching_boxes[ relationship_image[j][2]  ] == nil then goto continue end
             local feats=torch.Tensor(2,feat_dim)
 
-            print("matching_boxes[ relationship_image[j][1] ]")
-            print( matching_boxes[ relationship_image[j][1] ])
+           -- print("matching_boxes[ relationship_image[j][1] ]")
+           -- print( matching_boxes[ relationship_image[j][1] ])
 
-            print("matching_boxes[ relationship_image[j][2] ]")
-            print( matching_boxes[ relationship_image[j][2] ])
+           -- print("matching_boxes[ relationship_image[j][2] ]")
+           -- print( matching_boxes[ relationship_image[j][2] ])
 
-            print(" relationship_image[j][1] ")
-            print( relationship_image[j][1] )
+           -- print(" relationship_image[j][1] ")
+           -- print( relationship_image[j][1] )
 
-            print("relationship_image[j][2] ")
-            print( relationship_image[j][2] )
+           -- print("relationship_image[j][2] ")
+           -- print( relationship_image[j][2] )
 
+           -- print("Ground Truth Coordinates")
+           -- print(gt_boxes[ relationship_image[j][1]  ])
+
+           -- print("Matched Coordinates")
+           -- print(boxes_xywh[ matching_boxes[ relationship_image[j][1]   ]  ])
 
 
             feats[1]=all_feats[matching_boxes[ relationship_image[j][1] ]]
@@ -183,8 +188,6 @@ end
 -- Function to get the mapping between the ground truth boxes and the id's of the graph format
 
 local function parse_relationship_json( parsed_json ) -- create the parsed json file for the images that you want to process using python (the subset selection to be done by the python code)
-    print("Type of parsed_json")
-    print(type(parsed_json))
     local dict_relationship={}              -- The dictionary of all the relationship triplet 
     local all_relationship_data={}
     local gt_boxes={}
@@ -251,18 +254,20 @@ local function main()
     local valid_relationship=cjson.decode(valid_relationship_json_text)
     valid_relationship_json:close()
 
-    print("type of valid_relationship")
-    print(type(valid_relationship))
+    --print("type of valid_relationship")
+    --print(type(valid_relationship))
     -- process the json file to get the relationships and the bounding boxes for each image
     local dict_relationship,all_relationship_data,gt_boxes=unpack( parse_relationship_json( valid_relationship  ) )
 
    -- will take about 20GB of memory.
-    local relationship_images_file=hdf5.open( opt.relationship_h5 , 'r'  )
-    local relationship_images_all=relationship_images_file:read('images_relationship'):all()
-    relationship_images_file:close()
+    relationship_images_file=hdf5.open( opt.relationship_h5 , 'r'  )
+    --local relationship_images_all=relationship_images_file:read('images_relationship'):all()
+    --relationship_images_file:close()
+    local sizes=relationship_images_file:read('images_relationship'):dataspaceSize()
+    print(sizes)
 
-    print("images_relationship h5 file read")
-    local N = relationship_images_all:size(1)
+    --print("images_relationship h5 file read")
+    local N = sizes[1]
     local M = opt.boxes_per_image
     local D = 4096 -- TODO this is specific to VG
    -- local all_boxes = torch.FloatTensor(N, M, 4):zero()
@@ -275,7 +280,7 @@ local function main()
     relationship_mapping_json:close()
 
     collectgarbage()
-    print("parse_relationship_json")
+    --print("parse_relationship_json")
 
     --local all_matching_boxes={}
     -- Actually run the model
@@ -284,13 +289,15 @@ local function main()
     for i=1,N do
         print(string.format('Processing image %d / %d', i, N))
         if #gt_boxes[i]==0 then goto continue end
-        local final_gt_boxes,final_boxes,feats=unpack( run_image(model, relationship_images_all[i],gt_boxes[i] , opt, dtype))
+        local image=relationship_images_file:read('images_relationship'):partial( {i,i} , { 1, 3 }  , { 1 ,opt.image_size  } , { 1 , opt.image_size  })
+        image=image[1]
+        local final_gt_boxes,final_boxes,feats=unpack( run_image(model, image,gt_boxes[i] , opt, dtype))
         -- all_boxes[i]:copy(boxes[{{1, M}}])
         -- all_feats[i]:copy(feats[{{1, M}}])
         local matching_boxes=check_with_gt_box(gt_boxes[i] , final_gt_boxes , N , opt)
         --table.insert(all_matching_boxes,matching_boxes)  Don't need this perhaps
         --encode_relationships
-        local relationships,relationship_labels=unpack(encode_relationships_image( matching_boxes, feats , all_relationship_data[i] , num_images , D ,opt ))
+        local relationships,relationship_labels=unpack(encode_relationships_image(gt_boxes[i] , final_gt_boxes ,  matching_boxes, feats , all_relationship_data[i] , num_images , D ,opt ))
         if #relationships>0 then
             for k,v in pairs(relationships) do table.insert(all_relationship, v) end
             for k,v in pairs(relationship_labels) do table.insert(all_relationship_labels, v) end    
@@ -318,7 +325,7 @@ local function main()
     process_encoded_relationships( opt, all_relationship , all_relationship_labels , D  )
     
     collectgarbage()
-    print("process_encoded_relationships")
+    --print("process_encoded_relationships")
     -- Write data to the HDF5 file
     --  local h5_file = hdf5.open(opt.output_h5)
     --  h5_file:write('/feats', all_feats)

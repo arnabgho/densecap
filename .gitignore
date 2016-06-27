@@ -3,3 +3,8 @@
 /vis/data/*.jpg
 /vis/data/*.json
 *.h5
+/vt-data/
+/stats/*.txt
+*.json
+vt-check/
+vt-check-results/
