@@ -7,7 +7,7 @@ require 'densecap.DenseCapModel'
 local utils = require 'densecap.utils'
 local box_utils = require 'densecap.box_utils'
 
-
+json=require 'cjson'
 local cmd = torch.CmdLine()
 
 -- Model options
@@ -21,11 +21,12 @@ cmd:option('-boxes_per_image', 20)
 
 cmd:option('-input_txt', '')
 cmd:option('-max_images', 0)
-cmd:option('-output_h5', '')
-
+cmd:option('-output_h5', 'vqa_box_feat_train.h5')
+cmd:option('-mode','train')
 cmd:option('-gpu', 0)
 cmd:option('-use_cudnn', 1)
-
+cmd:option('img_input_dir','../HieCoAttenVQA/vt-data/')
+cmd:option('img_info_json','../Dynamic-memory-networks-in-Theano/data/vqa_fact_data_prepro.json')
 
 local function run_image(model, img_path, opt, dtype)
   -- Load, resize, and preprocess image
@@ -47,17 +48,23 @@ end
 
 local function main()
   local opt = cmd:parse(arg)
-  assert(opt.input_txt ~= '', 'Must provide -input_txt')
   assert(opt.output_h5 ~= '', 'Must provide -output_h5')
   
+  local f=io.open(opt.img_info_json)
+  local f_text=f:read("*all")
+  local json_data=json.decode(f_text)
+  f:close()
+
   -- Read the text file of image paths
   local image_paths = {}
-  for image_path in io.lines(opt.input_txt) do
-    table.insert(image_paths, image_path)
-    if opt.max_images > 0 and #image_paths == opt.max_images then
-      break
-    end
+  if opt.mode=="train" then
+    image_paths=json_data.unique_img_train
   end
+
+  if opt.mode=="test" then
+    image_paths=json_data.unique_img_test
+  end
+
   
   -- Load and set up the model
   local dtype, use_cudnn = utils.setup_gpus(opt.gpu, opt.use_cudnn)
@@ -86,16 +93,22 @@ local function main()
   -- Actually run the model
   for i, image_path in ipairs(image_paths) do
     print(string.format('Processing image %d / %d', i, N))
-    local boxes, feats = run_image(model, image_path, opt, dtype)
+    local boxes, feats = run_image(model,opt.img_input_dir .. image_path, opt, dtype)
     all_boxes[i]:copy(boxes[{{1, M}}])
     all_feats[i]:copy(feats[{{1, M}}])
   end
 
   -- Write data to the HDF5 file
-  local h5_file = hdf5.open(opt.output_h5)
-  h5_file:write('/feats', all_feats)
+  local h5_file = hdf5.open(opt.train_output_h5)
+  h5_file:write('/images_train', all_feats)
   h5_file:write('/boxes', all_boxes)
   h5_file:close()
+
+
+
+
+
+
 end
 
 main()
